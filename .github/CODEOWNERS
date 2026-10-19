@@ -1,0 +1,4 @@
+# Replace OWNER with the GitHub username that must approve protected branches.
+# Branch protection must also have "Require review from Code Owners" enabled.
+
+* @aHasnat1997

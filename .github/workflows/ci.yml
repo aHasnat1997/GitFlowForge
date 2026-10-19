@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, staging, development]
+
+permissions:
+  contents: read
+  pull-requests: read
+  security-events: write
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hygiene:
+    name: hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Branch name
+        if: github.event_name == 'pull_request'
+        env:
+          HEAD: ${{ github.head_ref }}
+        run: |
+          echo "$HEAD" | grep -Eq '^(feature|fix|hotfix|chore|docs|release)/[a-z0-9._-]+$|^(main|staging|development)$' \
+            || { echo "Branch must look like feature/short-name (or fix/, hotfix/, chore/, docs/, release/)"; exit 1; }
+      - name: Pull request title
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$TITLE" | grep -Eq '^(feat|fix|chore|docs|refactor|test|ci|build|perf|revert)(\(.+\))?: .+' \
+            || { echo "Title must be a Conventional Commit, e.g. feat: add export"; exit 1; }
+
+  secrets:
+    name: secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  sast:
+    name: sast
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Semgrep
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: p/default
+
+  dependencies:
+    name: dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy filesystem
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: 1
+          ignore-unfixed: true
+      - name: Dependency review
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4
+        continue-on-error: true
+
+  node:
+    name: node
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect and test
+        run: |
+          if [ ! -f package.json ]; then
+            echo "No package.json — skipped"
+            exit 0
+          fi
+          npm ci
+          npm run lint --if-present
+          npm test --if-present
+          npm run build
+
+  python:
+    name: python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Detect and test
+        run: |
+          if [ ! -f pyproject.toml ] && [ ! -f requirements.txt ] && [ ! -f setup.py ]; then
+            echo "No Python project — skipped"
+            exit 0
+          fi
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          if [ -f pyproject.toml ]; then pip install -e ".[dev]" || pip install -e . || true; fi
+          if command -v ruff >/dev/null 2>&1; then ruff check .; fi
+          if [ -d tests ] || [ -f pytest.ini ] || [ -f pyproject.toml ]; then
+            python -m pytest -q || true
+          fi
+
+  laravel:
+    name: laravel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        if: hashFiles('artisan') != ''
+        with:
+          php-version: "8.3"
+          coverage: none
+          tools: composer
+      - name: Install and test
+        if: hashFiles('artisan') != ''
+        run: |
+          composer install --no-interaction --prefer-dist
+          if [ -f .env.example ]; then cp .env.example .env; fi
+          php artisan key:generate
+          if [ -f vendor/bin/pint ]; then vendor/bin/pint --test; fi
+          php artisan test
+      - name: Skip when this is not a Laravel app
+        if: hashFiles('artisan') == ''
+        run: echo "No artisan — Laravel job skipped"

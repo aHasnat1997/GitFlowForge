@@ -25,8 +25,8 @@ jobs:
         env:
           HEAD: ${{ github.head_ref }}
         run: |
-          echo "$HEAD" | grep -Eq '^(feature|fix|hotfix|chore|docs|release)/[a-z0-9._-]+$|^(dependabot)/[a-z0-9._/-]+$|^(main|staging|development)$' \
-            || { echo "Branch must look like feature/short-name (or fix/, hotfix/, chore/, docs/, release/, dependabot/)"; exit 1; }
+          echo "$HEAD" | grep -Eq '^(feature|fix|hotfix|chore|docs|release)/[a-z0-9._-]+$|^(main|staging|development)$|^dependabot/[a-z0-9._/-]+$' \
+            || { echo "Branch must look like feature/short-name (or fix/, hotfix/, chore/, docs/, release/), or dependabot/..."; exit 1; }
       - name: Pull request title
         if: github.event_name == 'pull_request'
         env:
@@ -96,7 +96,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Detect and test
